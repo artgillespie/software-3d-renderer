@@ -1,6 +1,8 @@
+// #define DEBUG = 1;
 #include "game.h"
 #include "SDL.h"
 #include "SDL_log.h"
+#include "cglm/cglm.h"
 
 struct state {
   int32_t clear_color;
@@ -10,7 +12,8 @@ struct state {
   int64_t elapsed_frames;
 
   struct geometry {
-    float x_pos;
+    vec3 position;
+    float z_rotation;
   } geometry;
 } typedef state;
 
@@ -31,17 +34,20 @@ inline void gfx_clear(SDL_Surface *surface, int32_t color) {
 }
 
 inline void gfx_plot(SDL_Surface *surface, int x, int y, int32_t color) {
+  if (x >= surface->w || y >= surface->h || x <= 0 || y <= 0) {
+    return;
+  }
   int32_t *pixels = (int32_t *)surface->pixels;
   pixels[x + y * surface->w] = color;
 }
 
-inline void gfx_draw_line(SDL_Surface *surface, gfx_point from, gfx_point to,
+inline void gfx_draw_line(SDL_Surface *surface, vec3 from, vec3 to,
                           int32_t color) {
   // unoptimized [digital differential analyzer
   // (DDA)](https://en.wikipedia.org/wiki/Digital_differential_analyzer_(graphics_algorithm))
   float x, y;
-  float dx = to.x - from.x;
-  float dy = to.y - from.y;
+  float dx = to[0] - from[0];
+  float dy = to[1] - from[1];
   float step;
   if (fabs(dx) >= fabs(dy)) {
     step = fabs(dx);
@@ -52,8 +58,8 @@ inline void gfx_draw_line(SDL_Surface *surface, gfx_point from, gfx_point to,
   dx = dx / step;
   dy = dy / step;
 
-  x = from.x;
-  y = from.y;
+  x = from[0];
+  y = from[1];
   for (int i = 0; i < step; i++) {
     gfx_plot(surface, roundf(x), roundf(y), color);
     x = x + dx;
@@ -61,11 +67,27 @@ inline void gfx_draw_line(SDL_Surface *surface, gfx_point from, gfx_point to,
   }
 }
 
-void gfx_draw_triangle(SDL_Surface *surface, gfx_point A, gfx_point B,
-                       gfx_point C, int32_t color) {
-  gfx_draw_line(surface, A, B, color);
-  gfx_draw_line(surface, B, C, color);
-  gfx_draw_line(surface, C, A, color);
+void gfx_draw_triangles(SDL_Surface *surface, float *vertices, int32_t count,
+                        mat4 transform, int32_t color) {
+  vec3 a;
+  vec3 b;
+  vec3 c;
+  float *vp = vertices;
+  for (int i = 0; i < count; i++) {
+    glm_vec3_make(vp, a);
+    vp += 3;
+    glm_vec3_make(vp, b);
+    vp += 3;
+    glm_vec3_make(vp, c);
+    vp += 3;
+    glm_mat4_mulv3(transform, a, 1.f, a);
+    glm_mat4_mulv3(transform, b, 1.f, b);
+    glm_mat4_mulv3(transform, c, 1.f, c);
+
+    gfx_draw_line(surface, a, b, color);
+    gfx_draw_line(surface, b, c, color);
+    gfx_draw_line(surface, c, a, color);
+  }
 }
 
 inline float wrapf(float v, float min, float max) {
@@ -82,7 +104,8 @@ int gm_start() {
   g_state.elapsed_ms = 0;
   g_state.last_frame = g_state.elapsed_ms;
   g_state.elapsed_frames = 0;
-  g_state.geometry.x_pos = 0.f;
+  glm_vec3_zero(g_state.geometry.position);
+  g_state.geometry.z_rotation = 0.f;
   // SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
   return 0;
 }
@@ -100,17 +123,26 @@ int gm_process(SDL_Surface *surface) {
   // clear
   gfx_clear(surface, 0xFF222233);
 
-  g_state.geometry.x_pos =
-      wrapf(g_state.geometry.x_pos + delta * 20.f, 0.f, surface->w);
+  vec3 translate;
+  glm_vec3_zero(translate);
+  translate[0] = delta * 20.f;
 
-  gfx_point triangle[3];
-  triangle[0].x = g_state.geometry.x_pos;
-  triangle[0].y = 100;
-  triangle[1].x = g_state.geometry.x_pos + 50;
-  triangle[1].y = 200;
-  triangle[2].x = g_state.geometry.x_pos + 100;
-  triangle[2].y = 100;
-  gfx_draw_triangle(surface, triangle[0], triangle[1], triangle[2], 0xFF00FF00);
+  mat4 transform, viewport;
+  glm_mat4_identity(transform);
+  glm_mat4_identity(viewport);
+  g_state.geometry.position[0] += delta * 20.f;
+  g_state.geometry.z_rotation += delta;
+
+  // glm_translate(transform, g_state.geometry.position);
+  glm_rotate_z(transform, g_state.geometry.z_rotation, transform);
+
+  glm_translate(viewport, (vec3){surface->w / 2.f, surface->h / 2.f, 1.0});
+  glm_scale(viewport, (vec3){surface->w / 2.f, -surface->h / 2.f, 1.0});
+  glm_mat4_mul(viewport, transform, transform);
+
+  float geometry[] = {-0.5, -0.5, 0.0, 0.5, -0.5, 0.0, -0.5, 0.5,  0.0,
+                      -0.5, 0.5,  0.0, 0.5, 0.5,  0.0, 0.5,  -0.5, 0.0};
+  gfx_draw_triangles(surface, geometry, 2, transform, 0xFF00FF00);
 
   g_state.elapsed_frames++;
   return 0;
