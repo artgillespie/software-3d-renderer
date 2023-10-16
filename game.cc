@@ -8,6 +8,10 @@ struct state {
   int64_t elapsed_ms;
   int64_t last_frame;
   int64_t elapsed_frames;
+
+  struct geometry {
+    float x_pos;
+  } geometry;
 } typedef state;
 
 state g_state;
@@ -33,6 +37,8 @@ inline void gfx_plot(SDL_Surface *surface, int x, int y, int32_t color) {
 
 inline void gfx_draw_line(SDL_Surface *surface, gfx_point from, gfx_point to,
                           int32_t color) {
+  // unoptimized [digital differential analyzer
+  // (DDA)](https://en.wikipedia.org/wiki/Digital_differential_analyzer_(graphics_algorithm))
   float x, y;
   float dx = to.x - from.x;
   float dy = to.y - from.y;
@@ -73,9 +79,10 @@ inline float wrapf(float v, float min, float max) {
 
 int gm_start() {
   g_state.start_ms = SDL_GetTicks64();
-  g_state.elapsed_ms = g_state.start_ms;
+  g_state.elapsed_ms = 0;
   g_state.last_frame = g_state.elapsed_ms;
   g_state.elapsed_frames = 0;
+  g_state.geometry.x_pos = 0.f;
   // SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
   return 0;
 }
@@ -85,21 +92,23 @@ int gm_process(SDL_Surface *surface) {
   int64_t current_ms = SDL_GetTicks64();
   int64_t current_elapsed_ms = current_ms - g_state.last_frame;
   float fps = 1000.f / current_elapsed_ms;
+  float delta = current_elapsed_ms / 1000.f;
   SDL_LogDebug(0, "FPS: %.2f (%lld)", fps, current_elapsed_ms);
-  g_state.elapsed_ms += current_ms;
+  g_state.elapsed_ms = current_ms;
   g_state.last_frame = current_ms;
 
   // clear
   gfx_clear(surface, 0xFF222233);
 
-  int start_x = wrapf(100 + g_state.elapsed_frames, 0.f, surface->w);
+  g_state.geometry.x_pos =
+      wrapf(g_state.geometry.x_pos + delta * 20.f, 0.f, surface->w);
 
   gfx_point triangle[3];
-  triangle[0].x = start_x;
+  triangle[0].x = g_state.geometry.x_pos;
   triangle[0].y = 100;
-  triangle[1].x = start_x + 50;
+  triangle[1].x = g_state.geometry.x_pos + 50;
   triangle[1].y = 200;
-  triangle[2].x = start_x + 100;
+  triangle[2].x = g_state.geometry.x_pos + 100;
   triangle[2].y = 100;
   gfx_draw_triangle(surface, triangle[0], triangle[1], triangle[2], 0xFF00FF00);
 
