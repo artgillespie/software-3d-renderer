@@ -24,6 +24,52 @@ struct gfx_point {
   int y;
 } typedef gfx_point;
 
+// clang-format off
+float *cube_mesh =
+    (float[]){-1.0, 1.0, -1.0, 
+              1.0, -1.0, -1.0, 
+              -1.0, -1.0, -1.0,
+              -1.0, 1.0, -1.0, 
+              1.0, 1.0, -1.0, 
+              1.0, -1.0, -1.0,
+              // right
+              1.0, 1.0, -1.0,
+              1.0, -1.0, 1.0,
+              1.0, -1.0, -1.0,
+              1.0, 1.0, -1.0,
+              1.0, 1.0, 1.0,
+              1.0, -1.0, 1.0,
+              // left
+              -1.0, 1.0, -1.0,
+              -1.0, -1.0, 1.0,
+              -1.0, -1.0, -1.0,
+              -1.0, 1.0, -1.0,
+              -1.0, 1.0, 1.0,
+              -1.0, -1.0, 1.0,
+              // back
+              -1.0, 1.0, 1.0, 
+              1.0, -1.0, 1.0,
+              -1.0, -1.0, 1.0,
+              -1.0, 1.0, 1.0, 
+              1.0, 1.0, 1.0,
+              1.0, -1.0, 1.0,
+              // bottom
+              -1.0, -1.0, -1.0,
+              1.0, -1.0, 1.0,
+              -1.0, -1.0, 1.0,
+              -1.0, -1.0, -1.0,
+              1.0, -1.0, -1.0,
+              1.0, -1.0, 1.0,
+              // top
+              -1.0, 1.0, -1.0,
+              1.0, 1.0, 1.0,
+              -1.0, 1.0, 1.0,
+              -1.0, 1.0, -1.0,
+              1.0, 1.0, -1.0,
+              1.0, 1.0, 1.0
+              };
+// clang-format on
+
 inline void gfx_clear(SDL_Surface *surface, int32_t color) {
   int32_t *pixels = (int32_t *)surface->pixels;
   for (int i = 0; i < surface->w * surface->h; i++) {
@@ -69,20 +115,26 @@ inline void gfx_draw_line(SDL_Surface *surface, vec3 from, vec3 to,
 
 void gfx_draw_triangles(SDL_Surface *surface, float *vertices, int32_t count,
                         mat4 transform, int32_t color) {
-  vec3 a;
-  vec3 b;
-  vec3 c;
+  vec4 a;
+  vec4 b;
+  vec4 c;
   float *vp = vertices;
   for (int i = 0; i < count; i++) {
-    glm_vec3_make(vp, a);
+    memcpy(a, vp, sizeof(float) * 3);
+    a[3] = 1.0;
     vp += 3;
-    glm_vec3_make(vp, b);
+    memcpy(b, vp, sizeof(float) * 3);
+    b[3] = 1.0;
     vp += 3;
-    glm_vec3_make(vp, c);
+    memcpy(c, vp, sizeof(float) * 3);
+    c[3] = 1.0;
     vp += 3;
-    glm_mat4_mulv3(transform, a, 1.f, a);
-    glm_mat4_mulv3(transform, b, 1.f, b);
-    glm_mat4_mulv3(transform, c, 1.f, c);
+    glm_mat4_mulv(transform, a, a);
+    glm_vec4_divs(a, a[3], a);
+    glm_mat4_mulv(transform, b, b);
+    glm_vec4_divs(b, b[3], b);
+    glm_mat4_mulv(transform, c, c);
+    glm_vec4_divs(c, c[3], c);
 
     gfx_draw_line(surface, a, b, color);
     gfx_draw_line(surface, b, c, color);
@@ -106,7 +158,7 @@ int gm_start() {
   g_state.elapsed_frames = 0;
   glm_vec3_zero(g_state.geometry.position);
   g_state.geometry.z_rotation = 0.f;
-  // SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
+  SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
   return 0;
 }
 
@@ -127,28 +179,30 @@ int gm_process(SDL_Surface *surface) {
   glm_vec3_zero(translate);
   translate[0] = delta * 20.f;
 
-  mat4 transform, viewport, perspective;
+  mat4 transform, view, perspective, viewport;
   glm_mat4_identity(transform);
   glm_mat4_identity(viewport);
+  glm_mat4_identity(view);
+
   glm_perspective(M_PI_2, float(surface->w) / float(surface->h), 0.1, 100.0,
                   perspective);
-  g_state.geometry.position[0] += delta * 0.1;
-  if (g_state.geometry.position[0] >= 1.0) {
-    g_state.geometry.position[0] -= 2.0;
-  }
+
+  glm_translate(view, (vec3){0.0, 0.0, -2.0});
+
+  //   g_state.geometry.position[0] += delta * 0.1;
   g_state.geometry.z_rotation += delta;
 
-  // glm_translate(transform, g_state.geometry.position);
-  glm_rotate_z(transform, g_state.geometry.z_rotation, transform);
+  glm_translate(transform, g_state.geometry.position);
+  glm_rotate_y(transform, sinf(g_state.geometry.z_rotation) * M_PI, transform);
+  glm_scale(transform, (vec3){0.5f, 0.5f, 0.5f});
+  glm_mat4_mul(view, transform, transform);
+  glm_mat4_mul(perspective, transform, transform);
 
   glm_translate(viewport, (vec3){surface->w / 2.f, surface->h / 2.f, 1.0});
   glm_scale(viewport, (vec3){surface->w / 2.f, -surface->h / 2.f, 1.0});
   glm_mat4_mul(viewport, transform, transform);
-  glm_mat4_mul(perspective, transform, transform);
 
-  float geometry[] = {-0.5, -0.5, 0.0, 0.5, -0.5, 0.0, -0.5, 0.5,  0.0,
-                      -0.5, 0.5,  0.0, 0.5, 0.5,  0.0, 0.5,  -0.5, 0.0};
-  gfx_draw_triangles(surface, geometry, 2, transform, 0xFF00FF00);
+  gfx_draw_triangles(surface, cube_mesh, 12, transform, 0xFF00FF00);
 
   g_state.elapsed_frames++;
   return 0;
