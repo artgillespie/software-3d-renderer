@@ -127,10 +127,15 @@ int gm_process(SDL_Surface *surface) {
   glm_vec3_zero(translate);
   translate[0] = delta * 20.f;
 
-  mat4 transform, viewport;
+  mat4 transform, viewport, perspective;
   glm_mat4_identity(transform);
   glm_mat4_identity(viewport);
-  g_state.geometry.position[0] += delta * 20.f;
+  glm_perspective(M_PI_2, float(surface->w) / float(surface->h), 0.1, 100.0,
+                  perspective);
+  g_state.geometry.position[0] += delta * 0.1;
+  if (g_state.geometry.position[0] >= 1.0) {
+    g_state.geometry.position[0] -= 2.0;
+  }
   g_state.geometry.z_rotation += delta;
 
   // glm_translate(transform, g_state.geometry.position);
@@ -139,6 +144,7 @@ int gm_process(SDL_Surface *surface) {
   glm_translate(viewport, (vec3){surface->w / 2.f, surface->h / 2.f, 1.0});
   glm_scale(viewport, (vec3){surface->w / 2.f, -surface->h / 2.f, 1.0});
   glm_mat4_mul(viewport, transform, transform);
+  glm_mat4_mul(perspective, transform, transform);
 
   float geometry[] = {-0.5, -0.5, 0.0, 0.5, -0.5, 0.0, -0.5, 0.5,  0.0,
                       -0.5, 0.5,  0.0, 0.5, 0.5,  0.0, 0.5,  -0.5, 0.0};
