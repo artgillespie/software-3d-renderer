@@ -1,10 +1,21 @@
 #include "game.h"
 #include "SDL.h"
+#include "SDL_log.h"
 
 struct state {
   int32_t clear_color;
-
+  int64_t start_ms;
+  int64_t elapsed_ms;
+  int64_t last_frame;
+  int64_t elapsed_frames;
 } typedef state;
+
+state g_state;
+
+struct gfx_point {
+  int x;
+  int y;
+} typedef gfx_point;
 
 inline void gfx_clear(SDL_Surface *surface, int32_t color) {
   int32_t *pixels = (int32_t *)surface->pixels;
@@ -20,31 +31,79 @@ inline void gfx_plot(SDL_Surface *surface, int x, int y, int32_t color) {
   pixels[x + y * surface->w] = color;
 }
 
-void gfx_draw_line(SDL_Surface *surface, int from_x, int from_y, int to_x,
-                   int to_y, int32_t color) {
-  int dx = to_x - from_x;
-  int dy = to_y - from_y;
-  float D = 2 * dy - dx;
-  int y = from_y;
+inline void gfx_draw_line(SDL_Surface *surface, gfx_point from, gfx_point to,
+                          int32_t color) {
+  float x, y;
+  float dx = to.x - from.x;
+  float dy = to.y - from.y;
+  float step;
+  if (fabs(dx) >= fabs(dy)) {
+    step = fabs(dx);
+  } else {
+    step = fabs(dy);
+  }
 
-  for (int x = from_x; x < to_x; x++) {
-    gfx_plot(surface, x, y, color);
-    if (D > 0) {
-      y++;
-      D -= 2 * dx;
-    }
-    D += 2 * dy;
+  dx = dx / step;
+  dy = dy / step;
+
+  x = from.x;
+  y = from.y;
+  for (int i = 0; i < step; i++) {
+    gfx_plot(surface, roundf(x), roundf(y), color);
+    x = x + dx;
+    y = y + dy;
   }
 }
 
-int gm_start() { return 0; }
+void gfx_draw_triangle(SDL_Surface *surface, gfx_point A, gfx_point B,
+                       gfx_point C, int32_t color) {
+  gfx_draw_line(surface, A, B, color);
+  gfx_draw_line(surface, B, C, color);
+  gfx_draw_line(surface, C, A, color);
+}
+
+inline float wrapf(float v, float min, float max) {
+  if (v > max) {
+    return min + v - max;
+  } else if (v < min) {
+    return max - min - v;
+  }
+  return v;
+}
+
+int gm_start() {
+  g_state.start_ms = SDL_GetTicks64();
+  g_state.elapsed_ms = g_state.start_ms;
+  g_state.last_frame = g_state.elapsed_ms;
+  g_state.elapsed_frames = 0;
+  // SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
+  return 0;
+}
 
 int gm_process(SDL_Surface *surface) {
 
+  int64_t current_ms = SDL_GetTicks64();
+  int64_t current_elapsed_ms = current_ms - g_state.last_frame;
+  float fps = 1000.f / current_elapsed_ms;
+  SDL_LogDebug(0, "FPS: %.2f (%lld)", fps, current_elapsed_ms);
+  g_state.elapsed_ms += current_ms;
+  g_state.last_frame = current_ms;
+
   // clear
   gfx_clear(surface, 0xFF222233);
-  gfx_draw_line(surface, 0, 0, surface->w, surface->h, 0xFFFF0000);
-  gfx_draw_line(surface, 0, surface->h, surface->w, 0, 0xFF00FF00);
+
+  int start_x = wrapf(100 + g_state.elapsed_frames, 0.f, surface->w);
+
+  gfx_point triangle[3];
+  triangle[0].x = start_x;
+  triangle[0].y = 100;
+  triangle[1].x = start_x + 50;
+  triangle[1].y = 200;
+  triangle[2].x = start_x + 100;
+  triangle[2].y = 100;
+  gfx_draw_triangle(surface, triangle[0], triangle[1], triangle[2], 0xFF00FF00);
+
+  g_state.elapsed_frames++;
   return 0;
 }
 
