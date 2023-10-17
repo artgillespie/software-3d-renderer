@@ -195,6 +195,51 @@ void gm_vec2_clamp_and_scale(vec2 v, float min, float max) {
   v[1] *= s;
 }
 
+// returns `false` if the line is completely outside clip space
+inline bool gfx_clip_line(vec2 a, vec2 b, float min, float max) {
+  // liang-barsky algorithm https://en.wikipedia.org/wiki/Liang–Barsky_algorithm
+  float dx = b[0] - a[0];
+  float dy = b[1] - a[1];
+
+  float p[4] = {-dx, dx, -dy, dy};
+
+  float q[4] = {a[0] - min, max - a[0], a[1] - min, max - a[1]};
+
+  for (int i = 0; i < 4; i++) {
+    if (p[i] == 0.f && q[i] < 0.f) {
+      // line is parallel to this boundary and outside the orthogonal boundary
+      return false;
+    }
+  }
+
+  float u1 = -INFINITY;
+  float u2 = INFINITY;
+
+  for (int i = 0; i < 4; i++) {
+    if (p[i] < 0.f) {
+      u1 = fmaxf(u1, fmaxf(0.f, q[i] / p[i]));
+    }
+    if (p[i] > 0.f) {
+      u2 = fminf(u2, fminf(1.f, q[i] / p[i]));
+    }
+  }
+  fprintf(stderr, "clip_line: %.2f, %.2f\n", u1, u2);
+  if (u1 > u2) {
+    // outside
+    return false;
+  }
+  if (u1 < 0.f && u2 > 1.f) {
+    // completely inside
+    return true;
+  }
+  a[0] = a[0] + dx * u1;
+  a[1] = a[1] + dy * u1;
+  b[0] = b[0] + dx * u2;
+  b[1] = b[1] + dy * u2;
+
+  return true;
+}
+
 void gfx_draw_lines_tx(SDL_Surface *surface, float *vertices, mat4 transform,
                        int count, int32_t color) {
   float *vp = vertices;
@@ -218,12 +263,13 @@ void gfx_draw_lines_tx(SDL_Surface *surface, float *vertices, mat4 transform,
     }
     glm_vec4_divs(b, b[3], b);
 
-    // TODO: need clipping - scale the line to fit in clip space
+    // TODO: clip the line
+    if (!gfx_clip_line(a, b, -1., 1.)) {
+      return;
+    }
 
     glm_mat4_mulv(g_state.viewport_tx, a, a);
     glm_mat4_mulv(g_state.viewport_tx, b, b);
-
-    fprintf(stderr, "calling gfx_draw_line with: \n");
 
     gfx_draw_line(surface, a, b, color);
   }
