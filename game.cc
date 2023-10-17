@@ -1,7 +1,8 @@
-// #define DEBUG = 1;
+#define DEBUG = 1;
 #include "game.h"
 #include "SDL.h"
 #include "SDL_log.h"
+#include "assert.h"
 #include "cglm/cglm.h"
 
 struct state {
@@ -10,6 +11,9 @@ struct state {
   int64_t elapsed_ms;
   int64_t last_frame;
   int64_t elapsed_frames;
+
+  vec3 camera_pos;
+  vec3 camera_vel;
 
   struct geometry {
     vec3 position;
@@ -100,6 +104,10 @@ inline void gfx_draw_line(SDL_Surface *surface, vec3 from, vec3 to,
   } else {
     step = fabs(dy);
   }
+  if (step == 0.0) {
+    SDL_LogDebug(0, "step == 0");
+    return;
+  }
 
   dx = dx / step;
   dy = dy / step;
@@ -130,10 +138,19 @@ void gfx_draw_triangles(SDL_Surface *surface, float *vertices, int32_t count,
     c[3] = 1.0;
     vp += 3;
     glm_mat4_mulv(transform, a, a);
+    if (a[3] == 0.f) {
+      return;
+    }
     glm_vec4_divs(a, a[3], a);
     glm_mat4_mulv(transform, b, b);
+    if (b[3] == 0.f) {
+      return;
+    }
     glm_vec4_divs(b, b[3], b);
     glm_mat4_mulv(transform, c, c);
+    if (c[3] == 0.f) {
+      return;
+    }
     glm_vec4_divs(c, c[3], c);
 
     gfx_draw_line(surface, a, b, color);
@@ -151,14 +168,51 @@ inline float wrapf(float v, float min, float max) {
   return v;
 }
 
+void gfx_draw_lines_tx(SDL_Surface *surface, float *vertices, mat4 transform,
+                       int count, int32_t color) {
+  float *vp = vertices;
+  vec4 a;
+  vec4 b;
+  for (int i = 0; i < count; i++) {
+    glm_vec3_make(vp, a);
+    a[3] = 1.f;
+    vp += 3;
+    glm_vec3_make(vp, b);
+    b[3] = 1.f;
+    vp += 3;
+    glm_mat4_mulv(transform, a, a);
+    if (a[3] == 0.f) {
+      return;
+    }
+    glm_vec4_divs(a, a[3], a);
+    glm_mat4_mulv(transform, b, b);
+    if (b[3] == 0.f) {
+      return;
+    }
+    glm_vec4_divs(b, b[3], b);
+    gfx_draw_line(surface, a, b, color);
+  }
+}
+
+void gm_draw_axes(SDL_Surface *surface, mat4 transform, int32_t color) {
+  float vertices[] = {0.f, 10.f, 0.f, 0.f, -10.f, 0.f};
+  gfx_draw_lines_tx(surface, vertices, transform, 1, 0xFF00FF00);
+  float v2[] = {-10.f, 0.f, 0.f, 10.f, 0.f, 0.f};
+  gfx_draw_lines_tx(surface, v2, transform, 1, 0xFFFF0000);
+  float v3[] = {0.f, 0.f, -10.f, 0.f, 0.f, 10.f};
+  gfx_draw_lines_tx(surface, v3, transform, 1, 0xFF3333FF);
+}
+
 int gm_start() {
   g_state.start_ms = SDL_GetTicks64();
   g_state.elapsed_ms = 0;
   g_state.last_frame = g_state.elapsed_ms;
   g_state.elapsed_frames = 0;
+  glm_vec3_zero(g_state.camera_pos);
   glm_vec3_zero(g_state.geometry.position);
+  g_state.geometry.position[1] = 0.5f;
   g_state.geometry.z_rotation = 0.f;
-  SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
+  // SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
   return 0;
 }
 
@@ -184,11 +238,22 @@ int gm_process(SDL_Surface *surface) {
   glm_mat4_identity(viewport);
   glm_mat4_identity(view);
 
-  glm_perspective(M_PI_2, float(surface->w) / float(surface->h), 0.1, 100.0,
-                  perspective);
+  glm_perspective_default(float(surface->w) / float(surface->h), perspective);
 
-  glm_translate(view, (vec3){0.0, 0.0, -2.0});
+  // move camera
+  glm_vec3_add(g_state.camera_pos, g_state.camera_vel, g_state.camera_pos);
+  glm_translate(view, g_state.camera_pos);
 
+  glm_translate(viewport, (vec3){surface->w / 2.f, surface->h / 2.f, 1.0});
+  glm_scale(viewport, (vec3){surface->w / 2.f, -surface->h / 2.f, 1.0});
+
+  glm_mat4_identity(transform);
+  glm_mat4_mul(view, transform, transform);
+  glm_mat4_mul(perspective, transform, transform);
+  glm_mat4_mul(viewport, transform, transform);
+  gm_draw_axes(surface, transform, 0xFF999999);
+
+  glm_mat4_identity(transform);
   //   g_state.geometry.position[0] += delta * 0.1;
   g_state.geometry.z_rotation += delta;
 
@@ -197,15 +262,46 @@ int gm_process(SDL_Surface *surface) {
   glm_scale(transform, (vec3){0.5f, 0.5f, 0.5f});
   glm_mat4_mul(view, transform, transform);
   glm_mat4_mul(perspective, transform, transform);
-
-  glm_translate(viewport, (vec3){surface->w / 2.f, surface->h / 2.f, 1.0});
-  glm_scale(viewport, (vec3){surface->w / 2.f, -surface->h / 2.f, 1.0});
   glm_mat4_mul(viewport, transform, transform);
 
-  gfx_draw_triangles(surface, cube_mesh, 12, transform, 0xFF00FF00);
+  gfx_draw_triangles(surface, cube_mesh, 12, transform, 0xFF00FFFF);
 
   g_state.elapsed_frames++;
   return 0;
 }
 
 int gm_quit() { return 0; }
+
+void gm_keydown(const SDL_KeyboardEvent *evt) {
+  // TODO: change this to use camera facing normal
+  float vel = 0.01;
+  if (evt->keysym.scancode == SDL_SCANCODE_W) {
+    g_state.camera_vel[2] = vel;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_S) {
+    g_state.camera_vel[2] = -vel;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_Q) {
+    g_state.camera_vel[1] = vel;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_E) {
+    g_state.camera_vel[1] = -vel;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_A) {
+    g_state.camera_vel[0] = vel;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_D) {
+    g_state.camera_vel[0] = -vel;
+  }
+}
+
+void gm_keyup(const SDL_KeyboardEvent *evt) {
+  if (evt->keysym.scancode == SDL_SCANCODE_W) {
+    g_state.camera_vel[2] = 0.0;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_S) {
+    g_state.camera_vel[2] = 0.0;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_Q) {
+    g_state.camera_vel[1] = 0.0;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_E) {
+    g_state.camera_vel[1] = 0.0;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_A) {
+    g_state.camera_vel[0] = 0.0;
+  } else if (evt->keysym.scancode == SDL_SCANCODE_D) {
+    g_state.camera_vel[0] = 0.0;
+  }
+}

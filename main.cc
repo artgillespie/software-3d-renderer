@@ -31,8 +31,6 @@ int main() {
     SDL_Quit();
   }
 
-  SDL_Event event;
-
   err = gm_start();
   if (err != 0) {
     SDL_LogError(0, "Error starting game %d", err);
@@ -44,11 +42,25 @@ int main() {
   SDL_LogInfo(0, "bits per pixel: %d", state.surface->format->BitsPerPixel);
 
   state.is_running = true;
+
+  SDL_Event event;
   while (state.is_running) {
     if (SDL_PollEvent(&event)) {
       switch (event.type) {
       case SDL_QUIT:
         state.is_running = false;
+        break;
+      case SDL_MOUSEBUTTONDOWN:
+        break;
+      case SDL_MOUSEBUTTONUP:
+        break;
+      case SDL_MOUSEWHEEL:
+        break;
+      case SDL_KEYDOWN:
+        gm_keydown(&event.key);
+        break;
+      case SDL_KEYUP:
+        gm_keyup(&event.key);
         break;
       }
     }
