@@ -136,6 +136,23 @@ inline void gfx_draw_line(SDL_Surface *surface, vec2 from, vec2 to,
   }
 }
 
+inline void vec3_lerp(float t, const vec3 &a, const vec3 &b, vec3 &out) {
+  out[0] = (1.f - t) * a[0] + t * b[0];
+  out[1] = (1.f - t) * a[1] + t * b[1];
+  out[2] = (1.f - t) * a[2] + t * b[2];
+}
+
+inline void vec3_clamp(vec3 v, float inmin, float inmax) {
+  v[0] = fmax(inmin, fmin(inmax, v[0]));
+  v[1] = fmax(inmin, fmin(inmax, v[1]));
+  v[2] = fmax(inmin, fmin(inmax, v[2]));
+}
+inline int32_t vec3_color(vec3 in) {
+  vec3_clamp(in, 0.f, 1.0);
+  return 0xFF000000 + ((int)(in[0] * 255.f) << 16) +
+         ((int)(in[1] * 255.f) << 8) + (int)(in[2] * 255.f);
+}
+
 // in screen coordinate space
 inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
                               const vec2 &b, const vec2 &c, int32_t color) {
@@ -146,6 +163,10 @@ inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
   //    interpolate f(y) -> x1 for the long side p0 -> p2
   //    interpolate f(y) -> x2 for the current side (either p0->p1 or p1->p2)
   //    draw_line(x1, y, x2, y)
+  vec3 color_a = {1.f, 0.f, 0.f};
+  vec3 color_b = {0.f, 1.f, 0.f};
+  vec3 color_c = {0.f, 0.f, 1.f};
+
   vec2 p[3];
   memcpy(p[0], a, sizeof(vec2));
   memcpy(p[1], b, sizeof(vec2));
@@ -175,21 +196,38 @@ inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
   float ab_dy = 1.f / (p[1][1] - p[0][1]);
   float bc_dy = 1.f / (p[2][1] - p[1][1]);
 
+  // TODO: to interpolate between vertex attributes per-pixel, compute the
+  // interpolation along both the left and right edges, then interpolate
+  // between _them_ for each x
+
   // fill "top"
   for (int y = p[0][1]; y < p[1][1]; y++) {
     vec2 a;
     vec2 b;
-    a[0] = (y - p[0][1]) * ac_dy * (p[2][0] - p[0][0]) + p[0][0];
+    float t0 = (y - p[0][1]) * ac_dy;
+    float t1 = (y - p[0][1]) * ab_dy;
+    a[0] = t0 * (p[2][0] - p[0][0]) + p[0][0];
     a[1] = y;
-    b[0] = (y - p[0][1]) * ab_dy * (p[1][0] - p[0][0]) + p[0][0];
+    b[0] = t1 * (p[1][0] - p[0][0]) + p[0][0];
     b[1] = y;
+    vec3 c0;
+    vec3 c1;
+    vec3_lerp(t0, color_a, color_c, c0);
+    vec3_lerp(t1, color_a, color_b, c1);
+
     if (b[0] > a[0]) {
       for (int x = a[0]; x < b[0]; x++) {
-        gfx_plot(surface, x, y, color);
+        vec3 c2;
+        vec3_lerp((x - a[0]) / (b[0] - a[0]), c0, c1, c2);
+        int32_t c = vec3_color(c2);
+        gfx_plot(surface, x, y, c);
       }
     } else {
       for (int x = b[0]; x < a[0]; x++) {
-        gfx_plot(surface, x, y, color);
+        vec3 c2;
+        vec3_lerp((x - b[0]) / (a[0] - b[0]), c1, c0, c2);
+        int32_t c = vec3_color(c2);
+        gfx_plot(surface, x, y, c);
       }
     }
   }
@@ -197,17 +235,29 @@ inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
   for (int y = p[1][1]; y < p[2][1]; y++) {
     vec2 a;
     vec2 b;
+    float t0 = (y - p[0][1]) * ac_dy;
+    float t1 = (y - p[1][1]) * ab_dy;
     a[0] = (y - p[0][1]) * ac_dy * (p[2][0] - p[0][0]) + p[0][0];
     a[1] = y;
     b[0] = (y - p[1][1]) * bc_dy * (p[2][0] - p[1][0]) + p[1][0];
     b[1] = y;
+    vec3 c0;
+    vec3 c1;
+    vec3_lerp(t0, color_a, color_c, c0);
+    vec3_lerp(t1, color_b, color_c, c1);
     if (b[0] > a[0]) {
       for (int x = a[0]; x < b[0]; x++) {
-        gfx_plot(surface, x, y, color);
+        vec3 c2;
+        vec3_lerp((x - a[0]) / (b[0] - a[0]), c0, c1, c2);
+        int32_t c = vec3_color(c2);
+        gfx_plot(surface, x, y, c);
       }
     } else {
       for (int x = b[0]; x < a[0]; x++) {
-        gfx_plot(surface, x, y, color);
+        vec3 c2;
+        vec3_lerp((x - b[0]) / (a[0] - b[0]), c1, c0, c2);
+        int32_t c = vec3_color(c2);
+        gfx_plot(surface, x, y, c);
       }
     }
   }
@@ -380,7 +430,7 @@ int gm_start() {
   glm_vec3_zero(g_state.geometry.position);
   g_state.geometry.position[1] = 0.5f;
   g_state.geometry.z_rotation = 0.f;
-  // SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
+  SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
   return 0;
 }
 
