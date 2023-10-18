@@ -171,8 +171,6 @@ inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
     memcpy(p[2], t, sizeof(vec2));
   }
 
-  // TODO: optimize away the 1/dx, 1/dy divisions
-
   float ac_dy = 1.f / (p[2][1] - p[0][1]);
   float ab_dy = 1.f / (p[1][1] - p[0][1]);
   float bc_dy = 1.f / (p[2][1] - p[1][1]);
@@ -185,7 +183,15 @@ inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
     a[1] = y;
     b[0] = (y - p[0][1]) * ab_dy * (p[1][0] - p[0][0]) + p[0][0];
     b[1] = y;
-    gfx_draw_line(surface, a, b, color);
+    if (b[0] > a[0]) {
+      for (int x = a[0]; x < b[0]; x++) {
+        gfx_plot(surface, x, y, color);
+      }
+    } else {
+      for (int x = b[0]; x < a[0]; x++) {
+        gfx_plot(surface, x, y, color);
+      }
+    }
   }
   // fill "bottom"
   for (int y = p[1][1]; y < p[2][1]; y++) {
@@ -195,7 +201,15 @@ inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
     a[1] = y;
     b[0] = (y - p[1][1]) * bc_dy * (p[2][0] - p[1][0]) + p[1][0];
     b[1] = y;
-    gfx_draw_line(surface, a, b, color);
+    if (b[0] > a[0]) {
+      for (int x = a[0]; x < b[0]; x++) {
+        gfx_plot(surface, x, y, color);
+      }
+    } else {
+      for (int x = b[0]; x < a[0]; x++) {
+        gfx_plot(surface, x, y, color);
+      }
+    }
   }
 }
 
