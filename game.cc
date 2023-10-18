@@ -13,6 +13,10 @@ struct vertex {
   float z = 0.f;
 } typedef vertex;
 
+struct gfx_mesh {
+  std::vector<vertex> vertices;
+} typedef gfx_mesh;
+
 struct state {
   int32_t clear_color;
   int64_t start_ms;
@@ -28,7 +32,7 @@ struct state {
   struct geometry {
     vec3 position;
     float z_rotation;
-    std::vector<vertex> mesh;
+    gfx_mesh mesh;
   } geometry;
 } typedef state;
 
@@ -43,8 +47,9 @@ struct gfx_point {
 // **this is not robust** — it only looks at vertex and face lines
 // and expects all faces to be triangulated without verifying that
 // they are
-int io_load_mesh_from_obj(const char *filename, std::vector<vertex> &mesh) {
+int io_load_mesh_from_obj(const char *filename, gfx_mesh &mesh) {
   std::vector<vertex> vertices;
+  mesh.vertices.clear();
 
   size_t size;
   void *data = SDL_LoadFile(filename, &size);
@@ -52,6 +57,7 @@ int io_load_mesh_from_obj(const char *filename, std::vector<vertex> &mesh) {
     return -1;
   }
   std::string dstr(static_cast<char *>(data));
+  fprintf(stderr, "%s\n\n", dstr.c_str());
   std::stringstream ss(dstr);
 
   while (!ss.eof()) {
@@ -75,9 +81,9 @@ int io_load_mesh_from_obj(const char *filename, std::vector<vertex> &mesh) {
       vertex c;
       int i, j, k;
       ssl >> cmd >> i >> j >> k;
-      mesh.push_back(vertices[i - 1]);
-      mesh.push_back(vertices[j - 1]);
-      mesh.push_back(vertices[k - 1]);
+      mesh.vertices.push_back(vertices[i - 1]);
+      mesh.vertices.push_back(vertices[j - 1]);
+      mesh.vertices.push_back(vertices[k - 1]);
       break;
     }
     }
@@ -266,7 +272,8 @@ inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
 // TODO: need to pass transforms in individually since we need
 // to clip before the projection transform
 void gfx_draw_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
-                        mat4 transform, int32_t color) {
+                        mat4 model_tx, mat4 view_tx, mat4 perspective_tx,
+                        int32_t color) {
   vec4 a;
   vec4 b;
   vec4 c;
@@ -280,24 +287,41 @@ void gfx_draw_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
     memcpy(c, &mesh[i], sizeof(float) * 3);
     c[3] = 1.0;
     i++;
-    glm_mat4_mulv(transform, a, a);
-    if (a[3] == 0.f) {
-      return;
+    glm_mat4_mulv(model_tx, a, a);
+    glm_mat4_mulv(view_tx, a, a);
+
+    glm_mat4_mulv(model_tx, b, b);
+    glm_mat4_mulv(view_tx, b, b);
+
+    glm_mat4_mulv(model_tx, c, c);
+    glm_mat4_mulv(view_tx, c, c);
+
+    // normal
+    vec3 v1, v2, norm;
+    glm_vec3_sub(b, a, v1);
+    glm_vec3_sub(c, b, v2);
+    glm_vec3_cross(v1, v2, norm);
+    glm_vec3_norm(norm);
+
+    // backface culling
+    vec3 c2;
+    glm_vec3_sub((vec3){0.f, 0.f, 0.f}, a, c2);
+    float dot = glm_vec3_dot(norm, c2);
+    if (dot <= 0) {
+      continue;
     }
+
+    // clipping
+
+    // perspective tx
+    glm_mat4_mulv(perspective_tx, a, a);
     glm_vec4_divs(a, a[3], a);
-    glm_mat4_mulv(transform, b, b);
-    if (b[3] == 0.f) {
-      return;
-    }
+    glm_mat4_mulv(perspective_tx, b, b);
     glm_vec4_divs(b, b[3], b);
-    glm_mat4_mulv(transform, c, c);
-    if (c[3] == 0.f) {
-      return;
-    }
+    glm_mat4_mulv(perspective_tx, c, c);
     glm_vec4_divs(c, c[3], c);
 
-    // TODO: need clipping here
-
+    // viewport tx
     glm_mat4_mulv(g_state.viewport_tx, a, a);
     glm_mat4_mulv(g_state.viewport_tx, b, b);
     glm_mat4_mulv(g_state.viewport_tx, c, c);
@@ -430,7 +454,7 @@ int gm_start() {
   glm_vec3_zero(g_state.geometry.position);
   g_state.geometry.position[1] = 0.5f;
   g_state.geometry.z_rotation = 0.f;
-  SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
+  // SDL_LogSetAllPriority(SDL_LOG_PRIORITY_DEBUG);
   return 0;
 }
 
@@ -493,6 +517,8 @@ int gm_process(SDL_Surface *surface) {
   // clear
   gfx_clear(surface, 0xFF222233);
 
+  /*
+
   vec2 a = {200, 200};
   vec2 b = {250, 380};
   vec2 c = {100, 275};
@@ -502,8 +528,7 @@ int gm_process(SDL_Surface *surface) {
   gfx_draw_line(surface, a, b, 0xFFFF0000);
   gfx_draw_line(surface, b, c, 0xFFFF0000);
   gfx_draw_line(surface, c, a, 0xFFFF0000);
-
-  return 0;
+  */
 
   vec3 translate;
   glm_vec3_zero(translate);
@@ -535,10 +560,10 @@ int gm_process(SDL_Surface *surface) {
   // transform); glm_rotate_x(transform, sinf(g_state.geometry.z_rotation) *
   // M_PI, transform);
   glm_scale(transform, (vec3){0.5f, 0.5f, 0.5f});
-  glm_mat4_mul(view, transform, transform);
-  glm_mat4_mul(perspective, transform, transform);
 
-  gfx_draw_triangles(surface, g_state.geometry.mesh, transform, 0xFF00FFFF);
+  // render triangles surface, mesh, model_tx, view_tx, perspective_tx
+  gfx_draw_triangles(surface, g_state.geometry.mesh.vertices, transform, view,
+                     perspective, 0xFF00FFFF);
 
   g_state.elapsed_frames++;
   return 0;

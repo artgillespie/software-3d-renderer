@@ -66,7 +66,6 @@ int main() {
     }
     err = gm_process(state.surface);
     SDL_UpdateWindowSurface(state.window);
-    SDL_Delay(1);
   }
 
   SDL_LogInfo(0, "Shutting down");
