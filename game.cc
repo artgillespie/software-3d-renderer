@@ -136,6 +136,69 @@ inline void gfx_draw_line(SDL_Surface *surface, vec2 from, vec2 to,
   }
 }
 
+// in screen coordinate space
+inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
+                              const vec2 &b, const vec2 &c, int32_t color) {
+  // hacked-together algorithm from first principles, **not optimized at all**
+  // sort the vertices by their y-component
+  // longest side is p0 -> p2
+  // for both p0.y -> p1.y and p1.y -> p2.y
+  //    interpolate f(y) -> x1 for the long side p0 -> p2
+  //    interpolate f(y) -> x2 for the current side (either p0->p1 or p1->p2)
+  //    draw_line(x1, y, x2, y)
+  vec2 p[3];
+  memcpy(p[0], a, sizeof(vec2));
+  memcpy(p[1], b, sizeof(vec2));
+  memcpy(p[2], c, sizeof(vec2));
+
+  // sort lowest-to-highest y
+  if (p[1][1] < p[0][1]) {
+    vec2 t;
+    memcpy(t, p[0], sizeof(vec2));
+    memcpy(p[0], p[1], sizeof(vec2));
+    memcpy(p[1], t, sizeof(vec2));
+  }
+  if (p[2][1] < p[0][1]) {
+    vec2 t;
+    memcpy(t, p[0], sizeof(vec2));
+    memcpy(p[0], p[2], sizeof(vec2));
+    memcpy(p[2], t, sizeof(vec2));
+  }
+  if (p[2][1] < p[1][1]) {
+    vec2 t;
+    memcpy(t, p[1], sizeof(vec2));
+    memcpy(p[1], p[2], sizeof(vec2));
+    memcpy(p[2], t, sizeof(vec2));
+  }
+
+  // TODO: optimize away the 1/dx, 1/dy divisions
+
+  float ac_dy = 1.f / (p[2][1] - p[0][1]);
+  float ab_dy = 1.f / (p[1][1] - p[0][1]);
+  float bc_dy = 1.f / (p[2][1] - p[1][1]);
+
+  // fill "top"
+  for (int y = p[0][1]; y < p[1][1]; y++) {
+    vec2 a;
+    vec2 b;
+    a[0] = (y - p[0][1]) * ac_dy * (p[2][0] - p[0][0]) + p[0][0];
+    a[1] = y;
+    b[0] = (y - p[0][1]) * ab_dy * (p[1][0] - p[0][0]) + p[0][0];
+    b[1] = y;
+    gfx_draw_line(surface, a, b, color);
+  }
+  // fill "bottom"
+  for (int y = p[1][1]; y < p[2][1]; y++) {
+    vec2 a;
+    vec2 b;
+    a[0] = (y - p[0][1]) * ac_dy * (p[2][0] - p[0][0]) + p[0][0];
+    a[1] = y;
+    b[0] = (y - p[1][1]) * bc_dy * (p[2][0] - p[1][0]) + p[1][0];
+    b[1] = y;
+    gfx_draw_line(surface, a, b, color);
+  }
+}
+
 // TODO: need to pass transforms in individually since we need
 // to clip before the projection transform
 void gfx_draw_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
@@ -180,6 +243,9 @@ void gfx_draw_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
     gfx_draw_line(surface, c, a, color);
   }
 }
+
+void gfx_fill_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
+                        mat4 transform, int32_t color) {}
 
 inline float wrapf(float v, float min, float max) {
   if (v > max) {
@@ -362,6 +428,18 @@ int gm_process(SDL_Surface *surface) {
 
   // clear
   gfx_clear(surface, 0xFF222233);
+
+  vec2 a = {200, 200};
+  vec2 b = {250, 380};
+  vec2 c = {100, 275};
+
+  gfx_fill_triangle(surface, a, b, c, 0xFFFFFFFF);
+
+  gfx_draw_line(surface, a, b, 0xFFFF0000);
+  gfx_draw_line(surface, b, c, 0xFFFF0000);
+  gfx_draw_line(surface, c, a, 0xFFFF0000);
+
+  return 0;
 
   vec3 translate;
   glm_vec3_zero(translate);
