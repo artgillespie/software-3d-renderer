@@ -1,10 +1,17 @@
-#define DEBUG = 1;
+// #define DEBUG = 1;
 #include "game.h"
 #include "SDL.h"
 #include "SDL_log.h"
 #include "assert.h"
 #include "cglm/cglm.h"
-#include <vector>
+#include <sstream>
+#include <string>
+
+struct vertex {
+  float x = 0.f;
+  float y = 0.f;
+  float z = 0.f;
+} typedef vertex;
 
 struct state {
   int32_t clear_color;
@@ -21,6 +28,7 @@ struct state {
   struct geometry {
     vec3 position;
     float z_rotation;
+    std::vector<vertex> mesh;
   } geometry;
 } typedef state;
 
@@ -31,53 +39,53 @@ struct gfx_point {
   int y;
 } typedef gfx_point;
 
-void load_mesh_from_obj(const char *filename) {}
+// load vertices from an .obj file
+// **this is not robust** — it only looks at vertex and face lines
+// and expects all faces to be triangulated without verifying that
+// they are
+int io_load_mesh_from_obj(const char *filename, std::vector<vertex> &mesh) {
+  std::vector<vertex> vertices;
 
-// clang-format off
-float *cube_mesh =
-    (float[]){-1.0, -1.0, -1.0, 
-              -1.0, 1.0, -1.0, 
-              1.0, 1.0, -1.0,
-              -1.0, -1.0, -1.0, 
-              1.0, 1.0, -1.0, 
-              1.0, -1.0, -1.0,
-              // right
-              1.0, 1.0, -1.0,
-              1.0, -1.0, 1.0,
-              1.0, -1.0, -1.0,
-              1.0, 1.0, -1.0,
-              1.0, 1.0, 1.0,
-              1.0, -1.0, 1.0,
-              // left
-              -1.0, 1.0, -1.0,
-              -1.0, -1.0, 1.0,
-              -1.0, -1.0, -1.0,
-              -1.0, 1.0, -1.0,
-              -1.0, 1.0, 1.0,
-              -1.0, -1.0, 1.0,
-              // back
-              1.0, -1.0, 1.0, 
-              1.0, 1.0, 1.0,
-              -1.0, 1.0, 1.0,
-              1.0, -1.0, 1.0, 
-              -1.0, 1.0, 1.0,
-              -1.0, -1.0, 1.0,
-              // bottom
-              -1.0, -1.0, -1.0,
-              1.0, -1.0, 1.0,
-              -1.0, -1.0, 1.0,
-              -1.0, -1.0, -1.0,
-              1.0, -1.0, -1.0,
-              1.0, -1.0, 1.0,
-              // top
-              -1.0, 1.0, -1.0,
-              1.0, 1.0, 1.0,
-              -1.0, 1.0, 1.0,
-              -1.0, 1.0, -1.0,
-              1.0, 1.0, -1.0,
-              1.0, 1.0, 1.0
-              };
-// clang-format on
+  size_t size;
+  void *data = SDL_LoadFile(filename, &size);
+  if (data == NULL) {
+    return -1;
+  }
+  std::string dstr(static_cast<char *>(data));
+  std::stringstream ss(dstr);
+
+  while (!ss.eof()) {
+    char line[512];
+    ss.getline(line, 512);
+    if (strlen(line) == 0) {
+      continue;
+    }
+    std::stringstream ssl(line);
+    char cmd = line[0];
+    switch (cmd) {
+    case 'v': {
+      vertex v;
+      ssl >> cmd >> v.x >> v.y >> v.z;
+      vertices.push_back(v);
+      break;
+    }
+    case 'f': {
+      vertex a;
+      vertex b;
+      vertex c;
+      int i, j, k;
+      ssl >> cmd >> i >> j >> k;
+      mesh.push_back(vertices[i - 1]);
+      mesh.push_back(vertices[j - 1]);
+      mesh.push_back(vertices[k - 1]);
+      break;
+    }
+    }
+  }
+
+  SDL_free(data);
+  return 0;
+}
 
 inline void gfx_clear(SDL_Surface *surface, int32_t color) {
   int32_t *pixels = (int32_t *)surface->pixels;
@@ -98,7 +106,7 @@ inline void gfx_plot(SDL_Surface *surface, int x, int y, int32_t color) {
 }
 
 // in screen coordinate space
-inline void gfx_draw_line(SDL_Surface *surface, vec3 from, vec3 to,
+inline void gfx_draw_line(SDL_Surface *surface, vec2 from, vec2 to,
                           int32_t color) {
   // unoptimized [digital differential analyzer
   // (DDA)](https://en.wikipedia.org/wiki/Digital_differential_analyzer_(graphics_algorithm))
@@ -130,22 +138,21 @@ inline void gfx_draw_line(SDL_Surface *surface, vec3 from, vec3 to,
 
 // TODO: need to pass transforms in individually since we need
 // to clip before the projection transform
-void gfx_draw_triangles(SDL_Surface *surface, float *vertices, int32_t count,
+void gfx_draw_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
                         mat4 transform, int32_t color) {
   vec4 a;
   vec4 b;
   vec4 c;
-  float *vp = vertices;
-  for (int i = 0; i < count; i++) {
-    memcpy(a, vp, sizeof(float) * 3);
+  for (int i = 0; i < mesh.size();) {
+    memcpy(a, &mesh[i], sizeof(float) * 3);
     a[3] = 1.0;
-    vp += 3;
-    memcpy(b, vp, sizeof(float) * 3);
+    i++;
+    memcpy(b, &mesh[i], sizeof(float) * 3);
     b[3] = 1.0;
-    vp += 3;
-    memcpy(c, vp, sizeof(float) * 3);
+    i++;
+    memcpy(c, &mesh[i], sizeof(float) * 3);
     c[3] = 1.0;
-    vp += 3;
+    i++;
     glm_mat4_mulv(transform, a, a);
     if (a[3] == 0.f) {
       return;
@@ -229,6 +236,7 @@ inline bool gfx_clip_line(vec3 a, vec3 b, float min, float max) {
   return true;
 }
 
+// vertices in world-space
 void gfx_draw_lines_tx(SDL_Surface *surface, float *vertices, mat4 transform,
                        int count, int32_t color) {
   float *vp = vertices;
@@ -241,13 +249,6 @@ void gfx_draw_lines_tx(SDL_Surface *surface, float *vertices, mat4 transform,
     glm_vec3_make(vp, b);
     b[3] = 1.f;
     vp += 3;
-    /*
-    fprintf(stderr, "drawing line\n");
-    fprintf(stderr, "A: ");
-    glm_vec3_print(a, stderr);
-    fprintf(stderr, "B: ");
-    glm_vec3_print(b, stderr);
-    */
 
     glm_mat4_mulv(transform, a, a);
     if (a[3] == 0.f) {
@@ -263,13 +264,6 @@ void gfx_draw_lines_tx(SDL_Surface *surface, float *vertices, mat4 transform,
     }
 
     glm_vec4_divs(b, b[3], b);
-    /*
-    fprintf(stderr, "post-transform\n");
-    fprintf(stderr, "A: ");
-    glm_vec3_print(a, stderr);
-    fprintf(stderr, "B: ");
-    glm_vec3_print(b, stderr);
-    */
 
     glm_mat4_mulv(g_state.viewport_tx, a, a);
     glm_mat4_mulv(g_state.viewport_tx, b, b);
@@ -296,6 +290,7 @@ void gm_draw_axes(SDL_Surface *surface, mat4 transform, int32_t color) {
 }
 
 int gm_start() {
+  io_load_mesh_from_obj("../cube.obj", g_state.geometry.mesh);
   g_state.start_ms = SDL_GetTicks64();
   g_state.elapsed_ms = 0;
   g_state.last_frame = g_state.elapsed_ms;
@@ -384,19 +379,10 @@ int gm_process(SDL_Surface *surface) {
   glm_vec3_add(g_state.camera_pos, g_state.camera_vel, g_state.camera_pos);
   glm_translate(view, g_state.camera_pos);
 
-  vec4 ta = {0.f, 0.f, -10.f, 1.f};
-  vec4 tb = {0.f, 0.f, 10.f, 1.f};
-  gm_debug_tx_pt(view, perspective, ta, tb);
-
   glm_translate(g_state.viewport_tx,
                 (vec3){surface->w / 2.f, surface->h / 2.f, 1.0});
   glm_scale(g_state.viewport_tx,
             (vec3){surface->w / 2.f, -surface->h / 2.f, 1.0});
-
-  glm_mat4_identity(transform);
-  glm_mat4_mul(view, transform, transform);
-  glm_mat4_mul(perspective, transform, transform);
-  gm_draw_axes(surface, transform, 0xFF999999);
 
   glm_mat4_identity(transform);
   //   g_state.geometry.position[0] += delta * 0.1;
@@ -410,7 +396,7 @@ int gm_process(SDL_Surface *surface) {
   glm_mat4_mul(view, transform, transform);
   glm_mat4_mul(perspective, transform, transform);
 
-  gfx_draw_triangles(surface, cube_mesh, 12, transform, 0xFF00FFFF);
+  gfx_draw_triangles(surface, g_state.geometry.mesh, transform, 0xFF00FFFF);
 
   g_state.elapsed_frames++;
   return 0;
