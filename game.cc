@@ -269,11 +269,49 @@ inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
   }
 }
 
+inline float gfx_signed_distance(vec3 norm, vec3 pt, float d) {
+  return norm[0] * pt[0] + norm[1] * pt[1] * norm[2] * pt[2] + d;
+}
+
+/**
+ * @param norm - plane normal
+ * @param d - plane distance
+ * @param a,b,c - triangle to test against plane
+ * @param out_a, out_b, out_c - returned triangle A
+ * @param out_d, out_e, out_f - returned triangle B
+ *
+ * @return - Number of triangles returned. 0 == reject: triangle outside of
+ * plane
+ */
+inline int gfx_clip_triangle_to_plane(vec3 norm, float d, vec3 a, vec3 b,
+                                      vec3 c, vec3 out_a, vec3 out_b,
+                                      vec3 out_c, vec3 out_d, vec3 out_e,
+                                      vec3 _outf) {
+  float a_d = gfx_signed_distance(norm, a, d);
+  float b_d = gfx_signed_distance(norm, b, d);
+  float c_d = gfx_signed_distance(norm, c, d);
+  // all behind - reject
+  if (a_d < 0.f && b_d < 0.f && c_d < 0.f) {
+    return 0;
+  }
+  // all in front - accept
+  if (a_d >= 0.f && b_d >= 0.f && c_d >= 0.f) {
+    // leave original triangle in a, b, c
+    return 1;
+  }
+
+  // which vertices are in front of the plane?
+
+  return 0; // outside plane
+}
+
 // TODO: need to pass transforms in individually since we need
 // to clip before the projection transform
 void gfx_draw_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
                         mat4 model_tx, mat4 view_tx, mat4 perspective_tx,
                         int32_t color) {
+  std::vector<vertex> vertices_to_render;
+
   vec4 a;
   vec4 b;
   vec4 c;
@@ -312,7 +350,17 @@ void gfx_draw_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
     }
 
     // clipping
-
+    // no triangle (continue) -- all vertices outside the plane
+    // one triangle (pass) -- all vertices inside the plane
+    // one triangle (modified) -- two vertices outside the plane
+    // two triangles (split) -- one vertex outside the plane
+    vec3 d, e, f;
+    int count = gfx_clip_triangle_to_plane((vec3){0.f, 0.f, 1.f}, .1f, a, b, c,
+                                           a, b, c, d, e, f);
+    if (count == 0) {
+      fprintf(stderr, "clipped %d\n", i / 3);
+      continue;
+    }
     // perspective tx
     glm_mat4_mulv(perspective_tx, a, a);
     glm_vec4_divs(a, a[3], a);
