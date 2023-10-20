@@ -11,7 +11,11 @@ struct vertex {
   float x = 0.f;
   float y = 0.f;
   float z = 0.f;
-} typedef vertex;
+
+  vertex(float _x, float _y, float _z) : x(_x), y(_y), z(_z) {}
+  vertex(const vertex &rhs) : x(rhs.x), y(rhs.y), z(rhs.z) {}
+  vertex() : x(0.f), y(0.f), z(0.f) {}
+};
 
 struct gfx_mesh {
   std::vector<vertex> vertices;
@@ -269,8 +273,19 @@ inline void gfx_fill_triangle(SDL_Surface *surface, const vec2 &a,
   }
 }
 
-inline float gfx_signed_distance(vec3 norm, vec3 pt, float d) {
-  return norm[0] * pt[0] + norm[1] * pt[1] * norm[2] * pt[2] + d;
+inline float gfx_signed_distance(const vec3 norm, const vec3 pt, float d) {
+  return -(norm[0] * pt[0] + norm[1] * pt[1] + norm[2] * pt[2] + d);
+}
+
+inline void gfx_plane_intersection(vec3 norm, float d, vec3 a, vec3 b,
+                                   vec3 out_intersection) {
+
+  float n_a = norm[0] * a[0] + norm[1] * a[1] + norm[2] * a[2];
+  float n_b = norm[0] * b[0] + norm[1] * b[1] + norm[2] * b[2];
+  float t = (-d - n_a) / (n_b - n_a);
+  out_intersection[0] = a[0] + t * (b[0] - a[0]);
+  out_intersection[1] = a[1] + t * (b[1] - a[1]);
+  out_intersection[2] = a[2] + t * (b[2] - a[2]);
 }
 
 /**
@@ -286,23 +301,88 @@ inline float gfx_signed_distance(vec3 norm, vec3 pt, float d) {
 inline int gfx_clip_triangle_to_plane(vec3 norm, float d, vec3 a, vec3 b,
                                       vec3 c, vec3 out_a, vec3 out_b,
                                       vec3 out_c, vec3 out_d, vec3 out_e,
-                                      vec3 _outf) {
-  float a_d = gfx_signed_distance(norm, a, d);
-  float b_d = gfx_signed_distance(norm, b, d);
-  float c_d = gfx_signed_distance(norm, c, d);
+                                      vec3 out_f) {
+  struct t {
+    vec3 pt;
+    float d;
+  };
+
+  struct t points[3];
+
+  glm_vec3_make(a, points[0].pt);
+  points[0].d = gfx_signed_distance(norm, a, d);
+  glm_vec3_make(b, points[1].pt);
+  points[1].d = gfx_signed_distance(norm, b, d);
+  glm_vec3_make(c, points[2].pt);
+  points[2].d = gfx_signed_distance(norm, c, d);
+
+  int count_in = 0;
+
+  // quick accept/reject
+  for (int i = 0; i < 3; i++) {
+    if (points[i].d >= 0) {
+      count_in++;
+    }
+  }
+
   // all behind - reject
-  if (a_d < 0.f && b_d < 0.f && c_d < 0.f) {
+  if (count_in == 0) {
     return 0;
   }
   // all in front - accept
-  if (a_d >= 0.f && b_d >= 0.f && c_d >= 0.f) {
-    // leave original triangle in a, b, c
+  if (count_in == 3) {
+    glm_vec3_make(a, out_a);
+    glm_vec3_make(b, out_b);
+    glm_vec3_make(c, out_c);
     return 1;
   }
 
-  // which vertices are in front of the plane?
+  // poor man's sort points on d
+  if (points[1].d > points[0].d) {
+    struct t tmp = points[0];
+    points[0] = points[1];
+    points[1] = tmp;
+  }
+  if (points[2].d > points[0].d) {
+    struct t tmp = points[0];
+    points[0] = points[2];
+    points[2] = tmp;
+  }
+  if (points[2].d > points[1].d) {
+    struct t tmp = points[1];
+    points[1] = points[2];
+    points[2] = tmp;
+  }
 
-  return 0; // outside plane
+  if (count_in == 1) {
+    // one vertex inside plane -- find plane intersections of lines IO_1 and
+    // IO_2 for new triangle
+    // TODO: ensure clockwise winding??
+    glm_vec3_make(points[0].pt, out_a);
+    gfx_plane_intersection(norm, d, out_a, points[1].pt, out_b);
+    gfx_plane_intersection(norm, d, out_a, points[2].pt, out_c);
+    return 1;
+  }
+
+  // two vertices inside the plane. Find intersections C_1, C_2 for lines I_1O
+  // I_2O and create two triangles I_1, C_1, C_2 and I_2, C_2, C_1 (keeping
+  // clockwise winding)
+  vec3 i_1;
+  vec3 i_2;
+  vec3 c_1;
+  vec3 c_2;
+  glm_vec3_make(points[0].pt, i_1);
+  glm_vec3_make(points[1].pt, i_2);
+  gfx_plane_intersection(norm, d, i_1, points[2].pt, c_1);
+  gfx_plane_intersection(norm, d, i_2, points[2].pt, c_2);
+  glm_vec3_make(i_1, out_a);
+  glm_vec3_make(i_2, out_b);
+  glm_vec3_make(c_1, out_c);
+  glm_vec3_make(i_2, out_d);
+  glm_vec3_make(c_1, out_e);
+  glm_vec3_make(c_2, out_f);
+
+  return 2;
 }
 
 // TODO: need to pass transforms in individually since we need
@@ -354,11 +434,12 @@ void gfx_draw_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
     // one triangle (pass) -- all vertices inside the plane
     // one triangle (modified) -- two vertices outside the plane
     // two triangles (split) -- one vertex outside the plane
-    vec3 d, e, f;
-    int count = gfx_clip_triangle_to_plane((vec3){0.f, 0.f, 1.f}, .1f, a, b, c,
+    vec4 d, e, f;
+    // TODO: get near plane d from frustum/camera
+    int count = gfx_clip_triangle_to_plane((vec3){0.f, 0.f, 1.f}, 1.f, a, b, c,
                                            a, b, c, d, e, f);
     if (count == 0) {
-      fprintf(stderr, "clipped %d\n", i / 3);
+      // triangle outside z-clipping volume
       continue;
     }
     // perspective tx
@@ -377,6 +458,28 @@ void gfx_draw_triangles(SDL_Surface *surface, std::vector<vertex> &mesh,
     gfx_draw_line(surface, a, b, color);
     gfx_draw_line(surface, b, c, color);
     gfx_draw_line(surface, c, a, color);
+
+    if (count == 2) {
+      // set w component
+      d[3] = 1.f;
+      e[3] = 1.f;
+      f[3] = 1.f;
+      glm_mat4_mulv(perspective_tx, d, d);
+      glm_vec4_divs(d, d[3], d);
+      glm_mat4_mulv(perspective_tx, e, e);
+      glm_vec4_divs(e, e[3], e);
+      glm_mat4_mulv(perspective_tx, f, f);
+      glm_vec4_divs(f, f[3], f);
+
+      // viewport tx
+      glm_mat4_mulv(g_state.viewport_tx, d, d);
+      glm_mat4_mulv(g_state.viewport_tx, e, e);
+      glm_mat4_mulv(g_state.viewport_tx, f, f);
+
+      gfx_draw_line(surface, d, e, color);
+      gfx_draw_line(surface, e, f, color);
+      gfx_draw_line(surface, f, d, color);
+    }
   }
 }
 
@@ -607,7 +710,7 @@ int gm_process(SDL_Surface *surface) {
   // glm_rotate_y(transform, sinf(g_state.geometry.z_rotation) * M_PI,
   // transform); glm_rotate_x(transform, sinf(g_state.geometry.z_rotation) *
   // M_PI, transform);
-  glm_scale(transform, (vec3){0.5f, 0.5f, 0.5f});
+  glm_scale(transform, (vec3){1.f, 1.f, 1.f});
 
   // render triangles surface, mesh, model_tx, view_tx, perspective_tx
   gfx_draw_triangles(surface, g_state.geometry.mesh.vertices, transform, view,
@@ -620,7 +723,7 @@ int gm_process(SDL_Surface *surface) {
 int gm_quit() { return 0; }
 
 void gm_keydown(const SDL_KeyboardEvent *evt) {
-  float vel = 0.01;
+  float vel = 0.005;
   if (evt->keysym.scancode == SDL_SCANCODE_W) {
     g_state.camera_vel[2] = vel;
   } else if (evt->keysym.scancode == SDL_SCANCODE_S) {
